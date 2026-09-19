@@ -16,8 +16,8 @@ class MemoryPuzzle(BasePuzzle):
         self.digits = [0, 0, 0, 0, 0]
         self.selected = 0
         self.timer = Timer()
-        self.time_limit = 7.0
-        self.time_left = 7.0
+        self.time_limit = 14.0
+        self.time_left = 14.0
         self.countdown = 3.0
         
         self.phase = "INTRO" # INTRO, COUNTDOWN, SHOWING, INPUT, ERROR, SUCCESS
@@ -126,10 +126,6 @@ class MemoryPuzzle(BasePuzzle):
             render_text(surface, "[ENTER] Confirmar   [ESC] Salir", settings.FONTS["small"], cx, cy + 50, (200, 200, 200), center=True)
 
     def on_input(self, input_id: str, input_data: InputData) -> None:
-        if input_data.pressed and input_id == "cancel":
-            # Disabled to prevent escaping without winning
-            return
-
         if self.phase == "INTRO":
             if input_data.pressed and input_id == "confirm":
                 self.start_countdown()

@@ -29,7 +29,7 @@ class PuzzleState(BaseState):
             self.puzzle.render(surface)
 
     def on_input(self, input_id, input_data):
-        if input_data.pressed and input_id == "quit":
+        if input_data.pressed and input_id == "cancel":
             self.stack.pop()
             return
             

@@ -72,7 +72,15 @@ class PlayState(BaseState):
                     from gale.timer import Timer
                     Timer.tween(1.0, [(self, {'fade_alpha': 0.0})])
                     
-            self.ui_stack.push(DialogueState(ui_stack=self.ui_stack, lines=test_lines, speaker="Andrea", on_close=start_fade_in))
+            def show_sanity_tut():
+                from src.states.ui.SanityTutorialState import SanityTutorialState
+                self.ui_stack.push(SanityTutorialState(self.ui_stack, on_close=start_fade_in))
+                
+            def show_inv_tut():
+                from src.states.ui.InventoryTutorialState import InventoryTutorialState
+                self.ui_stack.push(InventoryTutorialState(self.ui_stack, on_close=show_sanity_tut))
+                
+            self.ui_stack.push(DialogueState(ui_stack=self.ui_stack, lines=test_lines, speaker="Andrea", on_close=show_inv_tut))
 
         self.hud = HUD(self.sanity_system, self.quest_manager, phone_manager=self.phone_manager)
 
@@ -347,7 +355,7 @@ class PlayState(BaseState):
                     speaker="Andrea", on_close=a2))
 
             # Foto 1: leaving amphitheater without keys (keys not found yet)
-            elif obj == "Buscar mis cosas en el anfiteatro" and not getattr(self, "foto1_sent", False) and "locker_simon" in self.completed_puzzles:
+            elif obj == "Buscar tus llaves" and not getattr(self, "foto1_sent", False) and "locker_simon" in self.completed_puzzles:
                 self.foto1_sent = True
                 from gale.timer import Timer
                 def send_foto1():

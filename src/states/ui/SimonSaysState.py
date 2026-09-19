@@ -99,7 +99,7 @@ class SimonSaysState(BaseState):
         if self.is_closing or self.fade_alpha > 0:
             return
             
-        if input_id == "quit" and input_data.pressed:
+        if input_id == "cancel" and input_data.pressed:
             self.trigger_close()
             return
             
