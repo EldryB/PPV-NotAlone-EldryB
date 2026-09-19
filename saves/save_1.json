@@ -1,0 +1,18 @@
+{
+    "map_name": "amphitheater_map",
+    "player_x": 161.88374406200657,
+    "player_y": 271.76223512875725,
+    "inventory": {
+        "pills": 0,
+        "items": [
+            "inv_llaves",
+            "inv_phone"
+        ]
+    },
+    "sanity": 100.0,
+    "quest_stage": 9,
+    "completed_puzzles": [],
+    "global_note_index": 0,
+    "jezu_disabled": false,
+    "dr_pepe_disabled": false
+}

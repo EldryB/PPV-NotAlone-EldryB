@@ -5,7 +5,6 @@ from gale.animation import Animation
 from gale.timer import Timer
 import settings
 
-
 class Player:
     #sprite-sheet
     DIR_TO_ROW = {
@@ -37,7 +36,7 @@ class Player:
         self.velocity = Vector2(0, 0)
         self.accel    = 800.0    
         self.friction = 1400.0  
-        self.max_speed = 200.0   
+        self.max_speed = 400.0   
 
         # Movement states
         self.direction = "down"
@@ -66,9 +65,7 @@ class Player:
     def position(self):
         return Vector2(self.x + self.width / 2, self.y + self.height / 2)
 
-
     def _build_animations(self):
-        #Gale returns clipping rects (quads), NOT surfaces
         anims = {}
         for direction, row in self.DIR_TO_ROW.items():
             start = row * 4          # primer frame de esa fila
@@ -101,8 +98,15 @@ class Player:
         self.timer.update(dt)
         
         if getattr(self, 'input_locked', False):
-            #input locked
-            self._change_state("moving")
+            prev_x, prev_y = getattr(self, '_prev_pos_x', self.x), getattr(self, '_prev_pos_y', self.y)
+            if self.x != prev_x or self.y != prev_y:
+                self._change_state("moving")
+            else:
+                self._change_state("standing")
+            
+            self._prev_pos_x = self.x
+            self._prev_pos_y = self.y
+            
             self.current_anim.update(dt)
             # hitbox follow character
             self.hitbox.x = round(self.x) + self.hitbox_offset_x
@@ -112,6 +116,8 @@ class Player:
             return
 
         self._handle_movement(dt)
+        self._prev_pos_x = self.x
+        self._prev_pos_y = self.y
         self.current_anim.update(dt)
 
     def _handle_movement(self, dt):
@@ -149,7 +155,6 @@ class Player:
             self._change_state("moving")
             self.time_standing = 0.0
 
-            # Synchronize the animation speed with the actual speed
             ratio = self.velocity.length() / self.max_speed
             self.current_anim.time_interval = max(0.06, 0.20 - 0.10 * ratio)
 
@@ -177,7 +182,10 @@ class Player:
             self._move_and_collide(self.velocity.x * dt, self.velocity.y * dt)
 
     def _move_and_collide(self, dx, dy):
-        collision_rects = getattr(self.world, 'collision_rects', [])
+        collision_rects = list(getattr(self.world, 'collision_rects', []))
+        if hasattr(self.world, 'npcs'):
+            for npc in self.world.npcs:
+                collision_rects.append(getattr(npc, 'hitbox', npc.rect))
 
         self.x += dx
         hb = self.hitbox
@@ -200,18 +208,53 @@ class Player:
                     hb.top = rect.bottom
                 self.y = hb.y - self.hitbox_offset_y
                 self.velocity.y = 0
+                
+        # Screen / Map limits
+        bounds_rect = getattr(self.world.camera, 'bounds', None)
+        max_w = bounds_rect.width if bounds_rect else settings.VIRTUAL_WIDTH
+        max_h = bounds_rect.height if bounds_rect else settings.VIRTUAL_HEIGHT
+        
+        if hb.left < 0:
+            hb.left = 0
+            self.x = hb.x - self.hitbox_offset_x
+        elif hb.right > max_w:
+            hb.right = max_w
+            self.x = hb.x - self.hitbox_offset_x
+            
+        if hb.top < 0:
+            hb.top = 0
+            self.y = hb.y - self.hitbox_offset_y
+        elif hb.bottom > max_h:
+            hb.bottom = max_h
+            self.y = hb.y - self.hitbox_offset_y
 
     def render(self, surface, camera):
-        tex_key = "andrea_walking" if self.state == "moving" else "andrea_idle"
-        texture  = settings.TEXTURES[tex_key]
-
-        frame_quad = self.current_anim.get_current_frame()
-
         #Target caemra
         dest = camera.apply(self.rect)
 
-        surface.blit(texture, dest, frame_quad)
-
+        if getattr(self, 'is_fallen', False):
+            texture = settings.TEXTURES.get("fall_andrea")
+            if texture and "fall_andrea" in settings.FRAMES:
+                frames = settings.FRAMES["fall_andrea"]
+                frame_idx = getattr(self, 'fall_frame_index', 0)
+                if frame_idx < len(frames):
+                    frame_quad = frames[frame_idx]
+                    surface.blit(texture, dest, frame_quad)
+                else:
+                    surface.blit(texture, dest, frames[-1])
+            else:
+                tex_key = "andrea_walking" if self.state == "moving" else "andrea_idle"
+                texture  = settings.TEXTURES[tex_key]
+                frame_quad = self.current_anim.get_current_frame()
+                img = texture.subsurface(frame_quad).copy()
+                img = pygame.transform.rotate(img, -90)
+                fall_dest = dest.move(0, 10)
+                surface.blit(img, fall_dest)
+        else:
+            tex_key = "andrea_walking" if self.state == "moving" else "andrea_idle"
+            texture  = settings.TEXTURES[tex_key]
+            frame_quad = self.current_anim.get_current_frame()
+            surface.blit(texture, dest, frame_quad)
 
     def on_input(self, input_id, input_data):
         pass

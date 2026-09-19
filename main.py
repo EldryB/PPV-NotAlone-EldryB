@@ -1,8 +1,3 @@
-"""
-
-Not Alone
-By: Eldry B.
-"""
 import settings
 from src.NotAlone import NotAlone
 

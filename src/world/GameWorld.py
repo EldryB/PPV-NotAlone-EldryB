@@ -1,6 +1,3 @@
-"""
-Not Alone — Mundo del Juego
-"""
 import pygame
 from pathlib import Path
 from gale.tilemap import load_tiled_map
@@ -16,11 +13,15 @@ from gale.timer import Timer
 import settings
 from src.states.ui.SimonSaysState import SimonSaysState
 
-
 class GameWorld:
-    def __init__(self, map_name, on_map_change=None, on_puzzle_trigger=None):
+    global_note_index = 0
+
+    def __init__(self, map_name, on_map_change=None, on_puzzle_trigger=None, on_dialogue=None, on_note_proximity=None, on_note_interact=None):
         self.on_map_change = on_map_change
         self.on_puzzle_trigger = on_puzzle_trigger
+        self.on_dialogue = on_dialogue
+        self.on_note_proximity = on_note_proximity
+        self.on_note_interact = on_note_interact
         self.tilemap = None
         self.player = None
         self.npcs = []
@@ -29,12 +30,12 @@ class GameWorld:
         self.decorations = []
         self.buildings = []
         self.collision_rects = []
+        self.notes = []
         
         
         self.camera = Camera(settings.VIRTUAL_WIDTH, settings.VIRTUAL_HEIGHT)
 
         self.load_map(map_name)
-
 
     def load_map(self, map_name, spawn_point=(200, 200)):
         self.map_name = map_name
@@ -49,6 +50,7 @@ class GameWorld:
         self.room_alphas = {}
         self.active_room = None
         self.active_interactable = None
+        self.closet_decoration = None
 
         #Load map
         map_path = Path(f"assets/maps/{map_name}.json")
@@ -67,21 +69,65 @@ class GameWorld:
                 is_rooms_layer = "room" in layer_name.lower()
                 
                 for obj in obj_layer:
+                    obj_name = (obj.name or "").lower()
+                    obj_type = getattr(obj, "class_", getattr(obj, "type", "")).lower()
+                    layer_name_lower = layer_name.lower()
+                    
+                    if "player_spawn" in obj_name or "player_spawn" in obj_type or "player_spawn" in layer_name_lower:
+                        spawn_point = (obj.x, obj.y)
+                        print(f"[GameWorld] Encontrado player_spawn en {spawn_point} en layer {layer_name_lower}")
+                        continue
+                        
+                    if layer_name_lower in ("door_outside", "door_out") or obj_name in ("door_outside", "door_out") or obj_type in ("door_outside", "door_out"):
+                        self.interactables.append(Interactable(
+                            obj.x, obj.y, obj.width, obj.height,
+                            on_interact=lambda: self._trigger_transition("return", None)
+                        ))
+                        continue
+                        
                     #Collisions
-                    if is_collision_layer or (obj.name and obj.name.lower() == "collision"):
+                    if is_collision_layer or obj_name == "collision":
                         self.collision_rects.append(
                             pygame.Rect(obj.x, obj.y, obj.width, obj.height)
                         )
+                        
+                    #Notes
+                    if layer_name.lower() == "note" or obj_name == "note" or obj_type == "note":
+                        idx = int(obj.properties.get("index", 0)) if hasattr(obj, 'properties') and 'index' in obj.properties else 0
+                        
+                        texts = []
+                        if hasattr(obj, 'properties') and 'texts' in obj.properties:
+                            texts_data = obj.properties['texts']
+                            if isinstance(texts_data, list):
+                                for td in texts_data:
+                                    if isinstance(td, dict) and 'value' in td:
+                                        texts.append(td['value'].strip().strip('"'))
+                                        
+                        prox_texts = []
+                        if hasattr(obj, 'properties') and 'proximity_texts' in obj.properties:
+                            prox_data = obj.properties['proximity_texts']
+                            if isinstance(prox_data, list):
+                                for pd in prox_data:
+                                    if isinstance(pd, dict) and 'value' in pd:
+                                        prox_texts.append(pd['value'].strip().strip('"'))
+                                        
+                        self.notes.append({
+                            'rect': pygame.Rect(obj.x, obj.y, obj.width, obj.height),
+                            'index': idx,
+                            'texts': texts,
+                            'proximity_texts': prox_texts,
+                            'prox_triggered': False
+                        })
                     
                     #Rooms
-                    if is_rooms_layer or (obj.name and "room" in obj.name.lower()):
+                    if is_rooms_layer or "room" in obj_name:
                         if hasattr(obj, 'properties') and 'room_index' in obj.properties:
                             idx = int(obj.properties['room_index'])
                             self.rooms[idx] = pygame.Rect(obj.x, obj.y, obj.width, obj.height)
                             self.room_alphas[idx] = 0.0 # Oscuridad total por defecto
 
                     # doors
-                    if is_doors_layer or (obj.name and "door" in obj.name.lower()):
+                    if is_doors_layer or "door" in obj_name:
                         dest_map = None
                         if hasattr(obj, 'properties') and 'object_tag' in obj.properties:
                             tag = obj.properties['object_tag']
@@ -92,30 +138,99 @@ class GameWorld:
                             else: dest_map = f"{tag}_map"
                         
                         if dest_map:
+                            # calculate spawn point for destination
+                            spawn_pt = (3 * 16, 14 * 16)
+                            if dest_map == "dr_map":
+                                spawn_pt = (19 * 16, 21 * 16)
+                                
                             #transition map
                             self.interactables.append(Interactable(
                                 obj.x, obj.y, obj.width, obj.height,
-                                on_interact=lambda m=dest_map: self._trigger_transition(m, (3 * 16, 14 * 16))
+                                on_interact=lambda m=dest_map, sp=spawn_pt: self._trigger_transition(m, sp)
                             ))
                         else:
                             #Transition room
-                            self.internal_doors.append(pygame.Rect(obj.x, obj.y, obj.width, obj.height))
+                            door_idx = 0
+                            if hasattr(obj, 'properties') and 'index' in obj.properties:
+                                door_idx = int(obj.properties['index'])
+                            self.internal_doors.append({
+                                'rect': pygame.Rect(obj.x, obj.y, obj.width, obj.height),
+                                'index': door_idx
+                            })
                             
-                    # Locker puzzle
-                    is_locker_layer = "locker" in layer_name.lower()
-                    if is_locker_layer or (obj.name and "locker" in obj.name.lower()):
-                        # Almacenamos su callback para lanzar el puzle
-                        def launch_simon_says():
-
-                            # We assume that PlayState is active and pass its ui_stack
-                            # Since GameWorld has no direct reference to the ui_stack, use a callback
-                            if hasattr(self, 'on_puzzle_trigger'):
-                                self.on_puzzle_trigger("simon_says")
+                    # Random Message Objects
+                    if hasattr(obj, 'properties') and 'messages' in obj.properties:
+                        messages_data = obj.properties['messages']
+                        if isinstance(messages_data, list):
+                            parsed_messages = []
+                            for msg_dict in messages_data:
+                                if isinstance(msg_dict, dict) and 'value' in msg_dict:
+                                    val = msg_dict['value'].strip().strip('"')
+                                    parsed_messages.append(val)
+                            
+                            if parsed_messages:
+                                def launch_random_message(msgs=parsed_messages):
+                                    import random
+                                    chosen = random.choice(msgs)
+                                    if hasattr(self, 'on_dialogue') and self.on_dialogue:
+                                        self.on_dialogue("random_msg", custom_lines=[chosen])
+                                        
+                                self.interactables.append(Interactable(
+                                    obj.x, obj.y, obj.width, obj.height,
+                                    on_interact=launch_random_message
+                                ))
+                                continue
                                 
-                        self.interactables.append(Interactable(
-                            obj.x, obj.y, obj.width, obj.height,
-                            on_interact=launch_simon_says
-                        ))
+                    is_interactive = layer_name.lower() in ("interactive", "interactivo") or "interactive" in obj_name
+                    is_graphics = "graphics" in layer_name.lower()
+                    
+                    if is_graphics:
+                        name_tag = None
+                        if hasattr(obj, 'properties') and 'name_tag' in obj.properties:
+                            name_tag = str(obj.properties['name_tag'])
+                        else:
+                            name_tag = (obj.name or "").lower() or getattr(obj, "class_", getattr(obj, "type", "")).lower()
+                        
+                        if name_tag and name_tag in settings.TEXTURES:
+                            dec = Decoration(obj.x, obj.y, settings.TEXTURES[name_tag])
+                            if "marco" in name_tag or "puerta" in name_tag or "porton" in name_tag or "logo" in name_tag:
+                                dec.hitbox = pygame.Rect(dec.x, dec.y, dec.width, 2500)
+                            self.decorations.append(dec)
+                            
+                            if name_tag == "armario_cerrado":
+                                self.closet_decoration = dec
+                            elif name_tag == "coat":
+                                self.coat_decoration = dec
+                        elif name_tag and name_tag in settings.FRAMES:
+                            pass
+                        continue
+                    
+                    if is_interactive:
+                        tag = None
+                        if hasattr(obj, 'properties'):
+                            if 'object_tag' in obj.properties: tag = obj.properties['object_tag']
+                            elif 'object_type' in obj.properties: tag = obj.properties['object_type']
+                            elif 'object_tipe' in obj.properties: tag = obj.properties['object_tipe']
+                            
+                        if not tag:
+                            if "locker" in obj_name or "locker" in obj_type:
+                                tag = "locker"
+                            elif "closet" in obj_name or "closet" in obj_type:
+                                tag = "closet"
+                            elif "poster" in obj_name or "poster" in obj_type:
+                                tag = "poster"
+                            elif "watch" in obj_name or "watch" in obj_type:
+                                tag = "watch"
+                        
+                        if tag:
+                            def launch_interaction(interaction_tag=tag):
+                                if hasattr(self, 'on_puzzle_trigger'):
+                                    self.on_puzzle_trigger(interaction_tag)
+                                    
+                            self.interactables.append(Interactable(
+                                obj.x, obj.y, obj.width, obj.height,
+                                on_interact=launch_interaction
+                            ))
                         
             print(f"[GameWorld] {len(self.collision_rects)} rects de colisión cargados.")
             print(f"[GameWorld] {len(self.rooms)} habitaciones cargadas.")
@@ -135,7 +250,6 @@ class GameWorld:
                     self.active_room = idx
                     self.room_alphas[idx] = 255.0
                     break
-            # if it dont spawn within an exact rectangle, light up room 1
             if self.active_room is None:
                 self.active_room = list(self.rooms.keys())[0] if self.rooms else None
                 if self.active_room is not None:
@@ -143,35 +257,49 @@ class GameWorld:
 
         # Config camera
         self.camera.follow(self.player, rate=6.0)
+        self.camera.x = self.player.x - (settings.VIRTUAL_WIDTH / 2)
+        self.camera.y = self.player.y - (settings.VIRTUAL_HEIGHT / 2)
+        
         if self.tilemap:
             map_w = self.tilemap.cols * self.tilemap.tile_width
             map_h = self.tilemap.rows * self.tilemap.tile_height
             self.camera.bounds = pygame.Rect(0, 0, map_w, map_h)
+            # Enforce bounds immediately
+            if self.camera.x < self.camera.bounds.left: self.camera.x = self.camera.bounds.left
+            if self.camera.y < self.camera.bounds.top: self.camera.y = self.camera.bounds.top
+            if self.camera.x + settings.VIRTUAL_WIDTH > self.camera.bounds.right: self.camera.x = self.camera.bounds.right - settings.VIRTUAL_WIDTH
+            if self.camera.y + settings.VIRTUAL_HEIGHT > self.camera.bounds.bottom: self.camera.y = self.camera.bounds.bottom - settings.VIRTUAL_HEIGHT
 
         self._setup_entities(map_name)
 
     def _setup_entities(self, map_name):
         if map_name == "main_map":
+            from src.entity.Jake import Jake
+            self.npcs.append(Jake(19 * 16, 102 * 16))
+            if not getattr(GameWorld, 'jezu_disabled', False):
+                from src.entity.Jezu import Jezu
+                self.npcs.append(Jezu(27 * 16, 68 * 16))
+            
             # interactive buildings
             self.buildings.append(Building(
                 14 * 16, 
                 10 * 16, 
                 settings.TEXTURES["edificio1"], 
-                "Edificio de Anatomía", 
+                "Edificio de AnatomA-a", 
                 self.player
             ))
             self.buildings.append(Building(
                 63 * 16, 
                 77 * 16, 
                 settings.TEXTURES["edificio3"], 
-                "Edificio de Embriología", 
+                "Edificio de EmbriologA-a", 
                 self.player
             ))
             self.buildings.append(Building(
                 20 * 16, 
                 39 * 16, 
                 settings.TEXTURES["edificio5"], 
-                "Anfiteatro de Anatomía", 
+                "Anfiteatro de AnatomA-a", 
                 self.player
             ))
             self.buildings.append(Building(
@@ -182,96 +310,15 @@ class GameWorld:
                 self.player
             ))
             
-            # No interactive Buildings
-            self.decorations.append(Decoration(32 * 16, 7 * 16, settings.TEXTURES["edificio2"]))
-            self.decorations.append(Decoration(3 * 16, 9 * 16, settings.TEXTURES["edificio4"]))
-            
-            #Decorations
-            self.decorations.append(Decoration(12 * 16, 62 * 16, settings.TEXTURES["faro"]))
-            self.decorations.append(Decoration(57 * 16, 67 * 16, settings.TEXTURES["faro"]))
-            self.decorations.append(Decoration(98 * 16, 81 * 16, settings.TEXTURES["faro"]))
-            
-           
-            self.decorations.append(Decoration(43 * 16, 53 * 16, settings.TEXTURES["arbol1"]))
-            self.decorations.append(Decoration(22 * 16, 72 * 16, settings.TEXTURES["arbol1"]))
-            self.decorations.append(Decoration(124 * 16, 67 * 16, settings.TEXTURES["arbol1"]))
-            
-          
-            self.decorations.append(Decoration(62 * 16, 36 * 16, settings.TEXTURES["toldo"]))
-            self.decorations.append(Decoration(81 * 16, 36 * 16, settings.TEXTURES["toldo"]))
-            
-            
-            self.decorations.append(Decoration(63 * 16, 68 * 16, settings.TEXTURES["fence_madera"]))
-            
-            
-            self.decorations.append(Decoration(12 * 16, 24 * 16, settings.TEXTURES["arbusto"]))
-            self.decorations.append(Decoration(34 * 16, 27 * 16, settings.TEXTURES["arbusto"]))
-            self.decorations.append(Decoration(12 * 16, 36 * 16, settings.TEXTURES["arbusto"]))
-            self.decorations.append(Decoration(57 * 16, 19 * 16, settings.TEXTURES["arbusto"]))
-            self.decorations.append(Decoration(25 * 16, 59 * 16, settings.TEXTURES["arbusto"]))
-            self.decorations.append(Decoration(46 * 16, 80 * 16, settings.TEXTURES["arbusto"]))
-            
-            
-            self.decorations.append(Decoration(15 * 16, 85 * 16, settings.TEXTURES["carros"]))
-            self.decorations.append(Decoration(0 * 16, 39 * 16, settings.TEXTURES["carros"]))
-            
-            
-            self.decorations.append(Decoration(64 * 16, 46 * 16, settings.TEXTURES["dulces"]))
-            self.decorations.append(Decoration(72 * 16, 46 * 16, settings.TEXTURES["dulces"]))
-            self.decorations.append(Decoration(84 * 16, 46 * 16, settings.TEXTURES["dulces"]))
-            
-            # fence
-            fence_width = 352
-            fence_y = 1744
-            
-            # Logos (force the bottom edge of the rectangle to overlap the fence)
-            logo1 = Decoration(4 * 16, 109 * 16, settings.TEXTURES["logo"])
-            logo1.hitbox = pygame.Rect(logo1.x, logo1.y, logo1.width, 2000 - logo1.y)
-            self.decorations.append(logo1)
-            
-            logo2 = Decoration(139 * 16, 109 * 16, settings.TEXTURES["logo"])
-            logo2.hitbox = pygame.Rect(logo2.x, logo2.y, logo2.width, 2000 - logo2.y)
-            self.decorations.append(logo2)
-
-            # fence paterns
-            self.decorations.append(Decoration(0, fence_y, settings.TEXTURES["valla_horizontal"]))
-            self.decorations.append(Decoration(fence_width, fence_y, settings.TEXTURES["valla_horizontal"]))
-            
-            # Gate
-            Gate_x = fence_width * 2
-            Gate_y = fence_y - 16
-            Gate_width = 192 # 12 tiles exactos de ancho
-            self.decorations.append(Decoration(Gate_x, Gate_y, settings.TEXTURES["porton"]))
-            
-            # fence
-            fence_2_x = Gate_x + Gate_width
-            self.decorations.append(Decoration(fence_2_x, fence_y, settings.TEXTURES["valla_horizontal"]))
-            self.decorations.append(Decoration(fence_2_x + fence_width, fence_y, settings.TEXTURES["valla_horizontal"]))
-            
-            #Door between fences
-            door_x = fence_2_x + (fence_width * 2)
-            self.decorations.append(Decoration(door_x, Gate_y, settings.TEXTURES["puerta"]))
-            
-            #Fence
-            door_gap = settings.TEXTURES["puerta"].get_width()
-            current_x = door_x + door_gap
-            while current_x < 2400:
-                self.decorations.append(Decoration(current_x, fence_y, settings.TEXTURES["valla_horizontal"]))
-                current_x += fence_width
-                
-        elif map_name == "amphitheater_map":
-            # Door frames with a giant logical lower bound so that the player always passes underneath them 
-            marco1 = Decoration(18 * 16, 26 * 16, settings.TEXTURES["marco_superior"])
-            marco1.hitbox = pygame.Rect(marco1.x, marco1.y, marco1.width, 2500)
-            self.decorations.append(marco1)
-            
-            marco2 = Decoration(76 * 16, 26 * 16, settings.TEXTURES["marco_superior"])
-            marco2.hitbox = pygame.Rect(marco2.x, marco2.y, marco2.width, 2500)
-            self.decorations.append(marco2)
+        elif map_name == "dr_map":
+            if not getattr(GameWorld, 'dr_pepe_disabled', False):
+                self.npcs.append(DrPepe(18 * 16, 3 * 16))
             
         elif map_name == "office":
-            self.npcs.append(DrPepe(150, 150))
-            self.npcs.append(Jezu(80, 150))
+            if not getattr(GameWorld, 'dr_pepe_disabled', False):
+                self.npcs.append(DrPepe(150, 150))
+            if not getattr(GameWorld, 'jezu_disabled', False):
+                self.npcs.append(Jezu(80, 150))
             self.transitions.append(MapTransition(20, 150, 32, 32, "main_map", (200, 200), self._trigger_transition))
         elif map_name == "amphitheater":
             self.transitions.append(MapTransition(20, 150, 32, 32, "main_map", (200, 200), self._trigger_transition))
@@ -280,23 +327,44 @@ class GameWorld:
 
     #Transitions
     
-    def _trigger_room_transition(self, door):
+    def _trigger_room_transition(self, door_info):
+        door = door_info['rect']
+        door_index = door_info.get('index', 0)
         self.player.input_locked = True
         
-        player_center_y = self.player.hitbox.centery
-        door_center_y = door.centery
-        
-        # Y target
-        if player_center_y > door_center_y:
-            # going up
-            target_y = door.top - self.player.hitbox.height - 4
-        else:
-            # going down
-            target_y = door.bottom + 4
-            
-        # check new room
-        test_rect = pygame.Rect(self.player.hitbox.x, target_y, self.player.hitbox.width, self.player.hitbox.height)
         target_room = None
+        
+        if door_index == 0:
+            # Vertical
+            player_center_y = self.player.hitbox.centery
+            door_center_y = door.centery
+            
+            if player_center_y > door_center_y:
+                target_y = door.top - self.player.hitbox.height - 4
+            else:
+                target_y = door.bottom + 4
+                
+            test_rect = pygame.Rect(self.player.hitbox.x, target_y, self.player.hitbox.width, self.player.hitbox.height)
+            
+            offset_y = self.player.hitbox_offset_y
+            real_target_y = target_y - offset_y
+            real_target_x = door.centerx - (self.player.rect.width / 2)
+        else:
+            # Horizontal
+            player_center_x = self.player.hitbox.centerx
+            door_center_x = door.centerx
+            
+            if player_center_x > door_center_x:
+                target_x = door.left - self.player.hitbox.width - 4
+            else:
+                target_x = door.right + 4
+                
+            test_rect = pygame.Rect(target_x, self.player.hitbox.y, self.player.hitbox.width, self.player.hitbox.height)
+            
+            offset_x = self.player.hitbox_offset_x
+            real_target_x = target_x - offset_x
+            real_target_y = door.centery - (self.player.hitbox.height / 2) - self.player.hitbox_offset_y
+
         for idx, room in self.rooms.items():
             if room.colliderect(test_rect):
                 target_room = idx
@@ -305,13 +373,6 @@ class GameWorld:
         if target_room is None or target_room == self.active_room:
             self.player.input_locked = False
             return
-            
-        # Actual target coordinates of the player (because player.y refers to the sprite)
-        offset_y = self.player.hitbox_offset_y
-        real_target_y = target_y - offset_y
-        
-        # Aling center x
-        real_target_x = door.centerx - (self.player.rect.width / 2)
         
         # save it for interpolation
         self._fade_out_room = self.active_room
@@ -322,7 +383,7 @@ class GameWorld:
         self.active_room = target_room
         
         Timer.tween(
-            1.2, 
+            0.9, 
             [
                 (self.player, {'x': float(real_target_x), 'y': float(real_target_y)}),
                 (self, {'_fade_out_val': 0.0, '_fade_in_val': 255.0})
@@ -332,23 +393,25 @@ class GameWorld:
 
     def _trigger_transition(self, target_map, spawn_point):
         print(f"[GameWorld] Solicitando cambio a mapa: {target_map}")
-        # Delegate the map change entirely to PlayState so that it handles the stack correctly
+        from src.systems.AudioManager import AudioManager
+        AudioManager.play_sfx("puerta_short")
         if self.on_map_change:
             self.on_map_change(target_map, spawn_point)
 
     #Interaction
 
     def interact(self):
-        interact_rect = self.player.hitbox.inflate(20, 20)
+        interact_rect = self.player.hitbox.inflate(60, 60)
         for npc in self.npcs:
             if interact_rect.colliderect(npc.rect):
                 npc.interact()
+                if hasattr(self, 'on_dialogue'):
+                    self.on_dialogue(npc.dialogue_key)
                 return
         for item in self.interactables:
             if interact_rect.colliderect(item.rect):
                 item.trigger()
                 return
-
 
     def update(self, dt):
         self.player.update(dt)
@@ -356,10 +419,30 @@ class GameWorld:
         
         # Internal transition
         if not getattr(self.player, 'input_locked', False):
-            for door in self.internal_doors:
-                if self.player.hitbox.colliderect(door):
-                    self._trigger_room_transition(door)
+            door_triggered = False
+            for door_info in self.internal_doors:
+                if self.player.hitbox.colliderect(door_info['rect']):
+                    self._trigger_room_transition(door_info)
+                    door_triggered = True
                     break
+            
+            if not door_triggered and self.rooms:
+                for idx, room_rect in self.rooms.items():
+                    if idx != self.active_room and room_rect.collidepoint(self.player.hitbox.centerx, self.player.hitbox.centery):
+                        self._fade_out_room = self.active_room
+                        self._fade_in_room = idx
+                        self._fade_out_val = self.room_alphas.get(self.active_room, 0.0)
+                        self._fade_in_val = self.room_alphas.get(idx, 0.0)
+                        self.active_room = idx
+                        
+                        from gale.timer import Timer
+                        Timer.tween(
+                            0.5, 
+                            [
+                                (self, {'_fade_out_val': 0.0, '_fade_in_val': 255.0})
+                            ]
+                        )
+                        break
         
         # Apply fade values
         if hasattr(self, '_fade_out_room'):
@@ -367,7 +450,7 @@ class GameWorld:
             self.room_alphas[self._fade_in_room] = self._fade_in_val
 
         self.active_interactable = None
-        interact_rect = self.player.hitbox.inflate(20, 20)
+        interact_rect = self.player.hitbox.inflate(60, 60)
         
         for npc in self.npcs:
             npc.update(dt)
@@ -380,23 +463,59 @@ class GameWorld:
         for item in self.interactables:
             if interact_rect.colliderect(item.rect) and not self.active_interactable:
                 self.active_interactable = item
+                
+        # Notes
+        for note in self.notes:
+            if note['index'] == GameWorld.global_note_index:
+                if interact_rect.colliderect(note['rect']):
+                    if note['proximity_texts'] and not note['prox_triggered']:
+                        for n in self.notes:
+                            if n['index'] == note['index']:
+                                n['prox_triggered'] = True
+                                
+                        if hasattr(self, 'on_note_proximity') and self.on_note_proximity:
+                            self.on_note_proximity(note['proximity_texts'])
+                            
+                    if not self.active_interactable:
+                        class NoteInteract:
+                            def __init__(self, gw, n):
+                                self.gw = gw
+                                self.n = n
+                            def interact(self):
+                                if hasattr(self.gw, 'on_note_interact') and self.gw.on_note_interact:
+                                    self.gw.on_note_interact(self.n['texts'], self.n['index'])
+                                GameWorld.global_note_index += 1
+                        
+                        self.active_interactable = NoteInteract(self, note)
 
         for transition in self.transitions:
             if self.player.hitbox.colliderect(transition.rect):
                 transition.trigger()
                 break
 
-
     def render(self, surface):
-        #Render using the world's internal camera with Y sorting
         surface.fill((30, 30, 30))
 
         if self.tilemap:
             self.tilemap.render(surface, self.camera)
 
+        note_tex = settings.TEXTURES.get("note")
+        active_notes = []
+        if note_tex:
+            for note in self.notes:
+                if note['index'] == GameWorld.global_note_index:
+                    class ActiveNote:
+                        def __init__(self, rect, tex):
+                            self.rect = rect
+                            self.hitbox = rect
+                            self.tex = tex
+                        def render(self, surf, cam):
+                            surf.blit(self.tex, cam.apply(self.rect))
+                    active_notes.append(ActiveNote(note['rect'], note_tex))
+
         # Y sorting
         # combine all the entities that have depth
-        entities = self.npcs + self.decorations + self.buildings + [self.player]
+        entities = self.npcs + self.decorations + self.buildings + active_notes + [self.player]
         
         # Sort the bottom border of the sprite
         entities.sort(key=lambda e: getattr(e, 'hitbox', e.rect).bottom)
@@ -426,6 +545,3 @@ class GameWorld:
             # Draw darkness on the map and entities
             surface.blit(dark_surf, (0, 0))
 
-        # Debug, dibujar collision_rects
-        # for r in self.collision_rects:
-        #     pygame.draw.rect(surface, (255,0,0), self.camera.apply(r), 1)

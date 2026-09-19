@@ -52,6 +52,8 @@ class SimonSaysState(BaseState):
         
         self.phase = "INSTRUCTION" # INSTRUCTION, STARTING, SHOWING, WAITING, WIN, FAIL, CLICKING
         self.lit_button = None
+        self.fails = 0
+        self.max_fails = 1
         
         # track input to prevent multiple rapid clicks
         self.mouse_was_pressed = False
@@ -81,6 +83,8 @@ class SimonSaysState(BaseState):
 
     def hide_sequence(self, index):
         self.lit_button = None
+        self.fails = 0
+        self.max_fails = 1
         Timer.after(0.1, lambda: self.show_sequence(index + 1))
 
     def update(self, dt: float) -> None:
@@ -143,6 +147,8 @@ class SimonSaysState(BaseState):
     def process_click(self, btn_idx):
         self.phase = "CLICKING"
         self.lit_button = btn_idx
+        if "boton" in settings.SOUNDS:
+            settings.SOUNDS["boton"].play()
         
         correct_idx = self.sequence[self.current_step]
         
@@ -161,18 +167,27 @@ class SimonSaysState(BaseState):
 
     def finish_click_step(self):
         self.lit_button = None
+        self.fails = 0
+        self.max_fails = 1
         self.phase = "WAITING"
 
     def finish_click_round(self):
         self.lit_button = None
+        self.fails = 0
+        self.max_fails = 1
         Timer.after(0.5, self.next_round)
 
     def fail(self):
         self.phase = "FAIL"
+        self.fails += 1
+        if self.sanity_system:
+            self.sanity_system.drain(25.0)
         Timer.after(1.0, self.reset_game)
 
     def reset_game(self):
         self.lit_button = None
+        self.fails = 0
+        self.max_fails = 1
         self.sequence = []
         self.phase = "STARTING"
         Timer.after(1.0, self.next_round)
@@ -183,14 +198,23 @@ class SimonSaysState(BaseState):
         Timer.after(1.5, self.trigger_close)
         
     def trigger_close(self):
+        from src.systems.AudioManager import AudioManager
+        AudioManager.stop_challenge_music()
         if not self.is_closing:
             self.is_closing = True
-            Timer.tween(0.8, [(self, {'fade_alpha': 255.0})], on_finish=self.close_game)
+            if getattr(self, 'phase', '') == "WIN":
+                def after_dialogue():
+                    Timer.tween(0.8, [(self, {'fade_alpha': 255.0})], on_finish=self.close_game)
+                
+                from src.states.ui.DialogueState import DialogueState
+                after_dialogue()
+            else:
+                Timer.tween(0.8, [(self, {'fade_alpha': 255.0})], on_finish=self.close_game)
         
     def close_game(self):
+        self.ui_stack.pop()
         if self.on_success:
             self.on_success()
-        self.ui_stack.pop()
 
     def render(self, surface: pygame.Surface) -> None:
 
@@ -238,27 +262,28 @@ class SimonSaysState(BaseState):
         # instructions
         if self.phase == "INSTRUCTION":
 
-            box_w, box_h = 240, 80
+            box_w, box_h = 300, 160
             box_x = (settings.VIRTUAL_WIDTH - box_w) // 2
             box_y = (settings.VIRTUAL_HEIGHT - box_h) // 2
             
-            # semi transparent box
             inst_bg = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
             inst_bg.fill((20, 20, 20, 220))
             surface.blit(inst_bg, (box_x, box_y))
             pygame.draw.rect(surface, (200, 200, 200), (box_x, box_y, box_w, box_h), 1)
             
             render_text(surface, "Acertijo de Memoria", settings.FONTS["medium"], box_x + box_w//2, box_y + 15, (255,255,255), center=True)
-            render_text(surface, "Repite el patrón de luces.", settings.FONTS["small"], box_x + box_w//2, box_y + 35, (200,200,200), center=True)
-            render_text(surface, "Tienes 10 seg por ronda.", settings.FONTS["small"], box_x + box_w//2, box_y + 48, (200,200,200), center=True)
+            render_text(surface, "Sigue el patron de los botones", settings.FONTS["small"], box_x + box_w//2, box_y + 40, (200,200,200), center=True)
+            render_text(surface, "exactamente en el mismo orden.", settings.FONTS["small"], box_x + box_w//2, box_y + 55, (200,200,200), center=True)
+            render_text(surface, "Tienes 1 solo intento para pasar la ronda.", settings.FONTS["small"], box_x + box_w//2, box_y + 75, (255,100,100), center=True)
+            render_text(surface, "Si te equivocas, pierdes 25% de cordura", settings.FONTS["small"], box_x + box_w//2, box_y + 95, (255,100,100), center=True)
+            render_text(surface, "y se reinicia el nivel.", settings.FONTS["small"], box_x + box_w//2, box_y + 110, (255,100,100), center=True)
             
-            # Flicker
             if int(pygame.time.get_ticks() / 500) % 2 == 0:
-                render_text(surface, "Presiona ENTER para comenzar", settings.FONTS["small"], box_x + box_w//2, box_y + 65, (100,255,100), center=True)
-
+                render_text(surface, "Presiona ENTER para comenzar", settings.FONTS["small"], box_x + box_w//2, box_y + 140, (100,255,100), center=True)
 
         if self.sanity_system:
             self.sanity_system.render(surface)
+            render_text(surface, f"Errores: {self.fails}/{self.max_fails}", settings.FONTS["small"], 4, 63, (255, 100, 100))
             
         # transition Fade in/out
         if self.fade_alpha > 0:

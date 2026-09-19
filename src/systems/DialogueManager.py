@@ -1,6 +1,9 @@
 class DialogueManager:
     def __init__(self):
         self.dialogues = {
+            "jake_interact": [
+                ("", "(Andrea acaricia al perro)")
+            ],
             "arrive_office": [
                 ("Teacher", "You're late. I need a favor from you."),
                 ("Player", "I'm sorry. What do you need?"),
@@ -34,7 +37,5 @@ class DialogueManager:
     
     def get_dialogue(self, dialogue_id):
         
-        #Returns the list of (speaker, text) tuples for the specified dialogue event.
-        #Returns a fallback error dialogue if not found.
     
         return self.dialogues.get(dialogue_id, [("System", "Dialogue not found.")])
