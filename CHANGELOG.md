@@ -1,7 +1,6 @@
-﻿# Changelog
+﻿# CHANGELOG
 
-## [1.0.0] - Not Alone Version 1
-
+## Version 1.0.0
 ### Added
 - **Complete Narrative Sequence**: Full 16-step quest tracking system with dynamic objectives.
 - **Untimed Exploration**: The Safe Puzzle is now untimed, allowing players to leave the UI (ESC) to freely explore the map for clues.
@@ -17,7 +16,24 @@
 
 ### Fixed
 - Fixed an issue where the Safe puzzle did not properly add the "Craneo" asset to the inventory.
-- Fixed a bug where returning to the amphitheater would trigger incorrect "Ya dejé mis cosas" dialogue instead of advancing the key-finding puzzle.
+- Fixed a bug where returning to the amphitheater would trigger incorrect "Ya deje mis cosas" dialogue instead of advancing the key-finding puzzle.
 - Fixed the phone message order to accurately send Jezu's message after delivering the coat, the unknown stalker's message when leaving the office, and the first photo when realizing the keys are missing.
 - Fixed map transitions crashing with an unexpected on_finish keyword argument.
 - Eliminated a debug loop that fast-forwarded players directly to the 9th objective on startup.
+
+## Version 0.1
+### Añadido
+- **Estructura Base del Motor:** Inicialización de la arquitectura del juego utilizando Pygame y la librería de estados Gale.
+- **Máquina de Estados Global:** Implementación de pantallas núcleo (TitleState, PlayState, GameOverState, EndingState).
+- **Integración con Tiled:** Sistema de parseo para mapas JSON múltiples con gestión de hitboxes.
+- **Sistema de Cámara y Y-Sorting:** Movimiento de cámara integrado y algoritmo de profundidad para que los personajes pasen correctamente por detrás y por delante de objetos, edificios y marcos de puertas.
+- **Niebla de Guerra y Habitaciones:** Sistema matemático de oscurecimiento (BLEND_RGBA_MIN) que permite ocultar habitaciones no exploradas y hacer transiciones al cruzar puertas.
+- **Transiciones Cinemáticas:** Efectos de *Fade-In / Fade-Out* dinámicos con Timer.tween para el cambio de mapas y puzles.
+- **Mecánicas del Jugador:** 
+  - **Sistema de Cordura (SanitySystem):** Barra de vida mental que produce alteraciones visuales si decae.
+  - **Inventario:** Sistema de pastillas consumibles para restaurar cordura.
+- **Puzles y Minijuegos:** 
+  - **Minijuego "Simon Says":** Acertijo de memoria visual.
+  - Generación de grilla interactiva, paleta de colores dinámicos, tiempos de reacción cortos y temporizador de penalización.
+  - HUD translúcido de instrucciones del minijuego.
+- **Sistema de UI e Interacciones:** Gestor de diálogos flotantes estilo RPG.
